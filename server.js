@@ -9,6 +9,7 @@ import bookingsRouter from './routes/bookings.js';
 import categoriesRouter from './routes/categories.js';
 import adminRouter from './routes/admin.js';
 import discountsRouter from './routes/discounts.js';
+import uploadRouter from './routes/upload.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -22,6 +23,8 @@ const corsOptions = {
     const allowedOrigins = [
       'http://localhost:5173',
       'http://localhost:3000',
+      'http://127.0.0.1:5173',
+      'http://127.0.0.1:3000',
       'https://sampleone.in',
       'https://www.sampleone.in'
     ];
@@ -49,6 +52,7 @@ app.use('/api/bookings', bookingsRouter);
 app.use('/api/categories', categoriesRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/discounts', discountsRouter);
+app.use('/api/upload', uploadRouter);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

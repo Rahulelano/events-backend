@@ -1,1 +1,0 @@
-ALTER TABLE events ADD COLUMN show_in_hero BOOLEAN DEFAULT FALSE; 

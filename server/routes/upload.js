@@ -1,97 +1,59 @@
 import express from 'express';
 import multer from 'multer';
-import { uploadImage, getOptimizedImageUrl } from '../config/cloudinary.js';
+import { v2 as cloudinary } from 'cloudinary';
 import { authenticateAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Configure multer for memory storage
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
-  },
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith('image/')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed'), false);
-    }
-  },
+// Test route to check if upload router is loaded
+router.get('/test', (req, res) => {
+  res.json({ message: 'Upload router is working!' });
 });
 
-// Upload single image
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: 'dly16icr8',
+  api_key: '983344653426663',
+  api_secret: 'N_qZKPSDyTeJnjJUz_rygkx3lno',
+});
+
+// Configure multer for memory storage
+const upload = multer({ storage: multer.memoryStorage() });
+
+// Upload image to Cloudinary
 router.post('/image', authenticateAdmin, upload.single('image'), async (req, res) => {
   try {
+    console.log('Upload request received');
+    
     if (!req.file) {
+      console.log('No file in request');
       return res.status(400).json({ error: 'No image file provided' });
     }
 
+    console.log('File received:', req.file.originalname, 'Size:', req.file.size);
+
     // Convert buffer to base64
-    const base64Image = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
-    
+    const b64 = Buffer.from(req.file.buffer).toString('base64');
+    const dataURI = `data:${req.file.mimetype};base64,${b64}`;
+
+    console.log('Uploading to Cloudinary...');
+
     // Upload to Cloudinary
-    const imageUrl = await uploadImage(base64Image, 'cbevent');
-    
-    res.json({
-      success: true,
-      imageUrl: imageUrl,
-      optimizedUrl: getOptimizedImageUrl(imageUrl, 800, 600)
+    const result = await cloudinary.uploader.upload(dataURI, {
+      folder: 'cbevent',
+      resource_type: 'auto',
+    });
+
+    console.log('Upload successful:', result.secure_url);
+
+    res.json({ 
+      success: true, 
+      image_url: result.secure_url,
+      public_id: result.public_id 
     });
   } catch (error) {
     console.error('Upload error:', error);
-    res.status(500).json({ error: 'Failed to upload image' });
-  }
-});
-
-// Upload multiple images
-router.post('/images', authenticateAdmin, upload.array('images', 5), async (req, res) => {
-  try {
-    if (!req.files || req.files.length === 0) {
-      return res.status(400).json({ error: 'No image files provided' });
-    }
-
-    const uploadPromises = req.files.map(async (file) => {
-      const base64Image = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
-      const imageUrl = await uploadImage(base64Image, 'cbevent');
-      return {
-        originalName: file.originalname,
-        imageUrl: imageUrl,
-        optimizedUrl: getOptimizedImageUrl(imageUrl, 800, 600)
-      };
-    });
-
-    const results = await Promise.all(uploadPromises);
-    
-    res.json({
-      success: true,
-      images: results
-    });
-  } catch (error) {
-    console.error('Upload error:', error);
-    res.status(500).json({ error: 'Failed to upload images' });
-  }
-});
-
-// Get optimized image URL
-router.get('/optimize', (req, res) => {
-  try {
-    const { url, width = 800, height = 600 } = req.query;
-    
-    if (!url) {
-      return res.status(400).json({ error: 'Image URL is required' });
-    }
-
-    const optimizedUrl = getOptimizedImageUrl(url, parseInt(width), parseInt(height));
-    
-    res.json({
-      success: true,
-      originalUrl: url,
-      optimizedUrl: optimizedUrl
-    });
-  } catch (error) {
-    console.error('Optimization error:', error);
-    res.status(500).json({ error: 'Failed to optimize image' });
+    res.status(500).json({ error: 'Failed to upload image: ' + error.message });
   }
 });
 

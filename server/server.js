@@ -73,9 +73,16 @@ async function startServer() {
   try {
     await testConnection();
     app.listen(PORT, () => {
-      console.log(`🚀 Server running on http://localhost:${PORT}`);
-      console.log(`📊 Admin panel available at http://localhost:5173/admin`);
-      console.log(`🎉 Events website available at http://localhost:5173`);
+      const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER;
+      if (isProduction) {
+        console.log(`🚀 Server running on https://cbevent-backend.onrender.com`);
+        console.log(`📊 Admin panel available at https://sampleone.in/admin`);
+        console.log(`🎉 Events website available at https://sampleone.in`);
+      } else {
+        console.log(`🚀 Server running on http://localhost:${PORT}`);
+        console.log(`📊 Admin panel available at http://localhost:5173/admin`);
+        console.log(`🎉 Events website available at http://localhost:5173`);
+      }
     });
   } catch (error) {
     console.error('Failed to start server:', error);

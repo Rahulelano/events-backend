@@ -44,14 +44,24 @@ router.get('/', async (req, res) => {
     let finalParams = params;
     if (params.length === 0) {
       // No WHERE params, interpolate LIMIT and OFFSET directly
-      finalQuery = `${query} ORDER BY e.priority_order DESC, e.date ASC LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`;
+      finalQuery = `${query} ORDER BY e.priority_order DESC, e.created_at DESC LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`;
       finalParams = [];
     } else {
       // Params exist, keep LIMIT and OFFSET as parameters
-      finalQuery = `${query} ORDER BY e.priority_order DESC, e.date ASC LIMIT ? OFFSET ?`;
+      finalQuery = `${query} ORDER BY e.priority_order DESC, e.created_at DESC LIMIT ? OFFSET ?`;
       finalParams = [...params, parseInt(limit), parseInt(offset)];
     }
     const [events] = await pool.execute(finalQuery, finalParams);
+    
+    // Debug logging
+    console.log('Events API - Query params:', { category, featured, trending, upcoming, limit, offset, search });
+    console.log('Events API - Found events:', events.length);
+    if (featured === 'true') {
+      console.log('Featured events:', events.map(e => ({ id: e.id, title: e.title, is_featured: e.is_featured, priority_order: e.priority_order })));
+    }
+    if (trending === 'true') {
+      console.log('Trending events:', events.map(e => ({ id: e.id, title: e.title, is_trending: e.is_trending, priority_order: e.priority_order })));
+    }
     
     res.json({
       events,
@@ -129,8 +139,26 @@ router.post('/', authenticateAdmin, async (req, res) => {
     const {
       title, description, short_description, image_url, date, time, venue,
       location, category_id, total_tickets, price, is_featured, is_trending,
-      is_upcoming, priority_order, show_in_hero
+      is_upcoming, priority_order, show_in_hero, contact_info
     } = req.body;
+    
+    // Handle priority order conflicts
+    let finalPriorityOrder = priority_order || 0;
+    if (finalPriorityOrder > 0) {
+      // Check if another event has the same priority
+      const [existingEvents] = await pool.execute(
+        'SELECT id FROM events WHERE priority_order = ? AND status = "active"',
+        [finalPriorityOrder]
+      );
+      
+      if (existingEvents.length > 0) {
+        // Shift down existing events with same or higher priority
+        await pool.execute(
+          'UPDATE events SET priority_order = priority_order + 1 WHERE priority_order >= ? AND status = "active"',
+          [finalPriorityOrder]
+        );
+      }
+    }
     
     // Provide default values for all parameters to prevent undefined values
     const eventData = {
@@ -148,21 +176,22 @@ router.post('/', authenticateAdmin, async (req, res) => {
       is_featured: is_featured || false,
       is_trending: is_trending || false,
       is_upcoming: is_upcoming || false,
-      priority_order: priority_order || 0,
-      show_in_hero: show_in_hero || false
+      priority_order: finalPriorityOrder,
+      show_in_hero: show_in_hero || false,
+      contact_info: contact_info || ''
     };
     
     const [result] = await pool.execute(`
       INSERT INTO events (
         title, description, short_description, image_url, date, time, venue,
         location, category_id, total_tickets, available_tickets, price,
-        is_featured, is_trending, is_upcoming, priority_order, show_in_hero
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        is_featured, is_trending, is_upcoming, priority_order, show_in_hero, contact_info
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       eventData.title, eventData.description, eventData.short_description, eventData.image_url,
       eventData.date, eventData.time, eventData.venue, eventData.location, eventData.category_id,
       eventData.total_tickets, eventData.total_tickets, eventData.price, eventData.is_featured,
-      eventData.is_trending, eventData.is_upcoming, eventData.priority_order, eventData.show_in_hero
+      eventData.is_trending, eventData.is_upcoming, eventData.priority_order, eventData.show_in_hero, eventData.contact_info
     ]);
     
     res.status(201).json({ 
@@ -171,7 +200,13 @@ router.post('/', authenticateAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('Create event error:', error);
-    res.status(500).json({ error: 'Failed to create event' });
+    console.error('Error details:', {
+      message: error.message,
+      code: error.code,
+      sqlMessage: error.sqlMessage,
+      sql: error.sql
+    });
+    res.status(500).json({ error: 'Failed to create event: ' + error.message });
   }
 });
 
@@ -181,12 +216,32 @@ router.put('/:id', authenticateAdmin, async (req, res) => {
     const {
       title, description, short_description, image_url, date, time, venue,
       location, category_id, total_tickets, price, is_featured, is_trending,
-      is_upcoming, priority_order, status, show_in_hero
+      is_upcoming, priority_order, status, show_in_hero, contact_info
     } = req.body;
     
     // Debug: Log the incoming data
     console.log('Update event - req.body:', req.body);
     console.log('Update event - req.params.id:', req.params.id);
+    
+    // Handle priority order conflicts for updates
+    let finalPriorityOrder = priority_order || 0;
+    const eventId = parseInt(req.params.id) || 0;
+    
+    if (finalPriorityOrder > 0) {
+      // Check if another event has the same priority (excluding current event)
+      const [existingEvents] = await pool.execute(
+        'SELECT id FROM events WHERE priority_order = ? AND status = "active" AND id != ?',
+        [finalPriorityOrder, eventId]
+      );
+      
+      if (existingEvents.length > 0) {
+        // Shift down existing events with same or higher priority
+        await pool.execute(
+          'UPDATE events SET priority_order = priority_order + 1 WHERE priority_order >= ? AND status = "active" AND id != ?',
+          [finalPriorityOrder, eventId]
+        );
+      }
+    }
     
     // Provide default values for all parameters to prevent undefined values
     const updateData = {
@@ -204,13 +259,13 @@ router.put('/:id', authenticateAdmin, async (req, res) => {
       is_featured: is_featured || false,
       is_trending: is_trending || false,
       is_upcoming: is_upcoming || false,
-      priority_order: priority_order || 0,
+      priority_order: finalPriorityOrder,
       status: status || 'active',
-      show_in_hero: show_in_hero || false
+      show_in_hero: show_in_hero || false,
+      contact_info: contact_info || ''
     };
     
     // Ensure event ID is valid
-    const eventId = parseInt(req.params.id) || 0;
     if (!eventId) {
       return res.status(400).json({ error: 'Invalid event ID' });
     }
@@ -223,7 +278,7 @@ router.put('/:id', authenticateAdmin, async (req, res) => {
       updateData.title, updateData.description, updateData.short_description, updateData.image_url,
       updateData.date, updateData.time, updateData.venue, updateData.location, updateData.category_id,
       updateData.total_tickets, updateData.price, updateData.is_featured, updateData.is_trending,
-      updateData.is_upcoming, updateData.priority_order, updateData.status, updateData.show_in_hero, eventId
+      updateData.is_upcoming, updateData.priority_order, updateData.status, updateData.show_in_hero, updateData.contact_info, eventId
     ];
     
     // Debug: Log the query parameters
@@ -234,7 +289,7 @@ router.put('/:id', authenticateAdmin, async (req, res) => {
         title = ?, description = ?, short_description = ?, image_url = ?,
         date = ?, time = ?, venue = ?, location = ?, category_id = ?,
         total_tickets = ?, price = ?, is_featured = ?, is_trending = ?,
-        is_upcoming = ?, priority_order = ?, status = ?, show_in_hero = ?, updated_at = CURRENT_TIMESTAMP
+        is_upcoming = ?, priority_order = ?, status = ?, show_in_hero = ?, contact_info = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `, queryParams);
     
